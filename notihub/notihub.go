@@ -167,7 +167,7 @@ func (n *Notification) String() string {
 }
 
 // NewNotificationHub initializes and returns NotificationHub pointer
-func NewNotificationHub(connectionString, hubPath string) *NotificationHub {
+func NewNotificationHub(connectionString, hubPath string, client *http.Client) *NotificationHub {
 	connData := strings.Split(connectionString, ";")
 
 	hub := &NotificationHub{
@@ -201,7 +201,7 @@ func NewNotificationHub(connectionString, hubPath string) *NotificationHub {
 	hub.hubURL.Path = hubPath
 	hub.hubURL.RawQuery = url.Values{apiVersionParam: {apiVersionValue}}.Encode()
 
-	hub.client = &hubHttpClient{&http.Client{}}
+	hub.client = &hubHttpClient{httpClient: client}
 	hub.expirationTimeGenerator = expirationTimeGeneratorFunc(generateExpirationTimestamp)
 
 	hub.regIdPath = xmlpath.MustCompile("/entry/content/*/RegistrationId")
