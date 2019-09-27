@@ -257,6 +257,7 @@ func (h *NotificationHub) send(ctx context.Context, n *Notification, orTags []st
 		headers["ServiceBusNotification-Tags"] = strings.Join(orTags, " || ")
 	}
 
+	//IOS 13 and upwards require these headers to be set. They are not set by Notification Hub at the moment, so we need to send them
 	if n.Format == AppleFormat {
 		if isAppleBackgroundNotification(n.Payload) {
 			headers["X-Apns-Push-Type"] = "background"
