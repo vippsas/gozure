@@ -10,6 +10,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -152,7 +153,7 @@ func (f NotificationFormat) IsValid() bool {
 		f == WindowsPhoneFormat
 }
 
-// NewNotification initalizes and returns Notification pointer
+// NewNotification initializes and returns Notification pointer
 func NewNotification(format NotificationFormat, payload []byte) (*Notification, error) {
 	if !format.IsValid() {
 		return nil, fmt.Errorf("unknown format '%s'", format)
@@ -230,7 +231,7 @@ func (h *NotificationHub) SendDirect(ctx context.Context, n *Notification, devic
 	return b, nil
 }
 
-// Schedule pusblishes a scheduled notification to azure notification hub
+// Schedule publishes a scheduled notification to azure notification hub
 func (h *NotificationHub) Schedule(ctx context.Context, n *Notification, orTags []string, deliverTime time.Time) ([]byte, error) {
 	b, err := h.send(ctx, n, orTags, &deliverTime)
 	if err != nil {
@@ -254,6 +255,16 @@ func (h *NotificationHub) send(ctx context.Context, n *Notification, orTags []st
 
 	if len(orTags) > 0 {
 		headers["ServiceBusNotification-Tags"] = strings.Join(orTags, " || ")
+	}
+
+	if n.Format == AppleFormat {
+		if isAppleBackgroundNotification(n.Payload) {
+			headers["X-Apns-Push-Type"] = "background"
+			headers["X-Apns-Priority"] = "5"
+		} else {
+			headers["X-Apns-Push-Type"] = "alert"
+			headers["X-Apns-Priority"] = "10"
+		}
 	}
 
 	url_ := &url.URL{
@@ -293,6 +304,17 @@ func (h *NotificationHub) sendDirect(ctx context.Context, n *Notification, devic
 		"ServiceBusNotification-Format":       string(n.Format),
 		"ServiceBusNotification-DeviceHandle": deviceHandle,
 		"X-Apns-Expiration":                   string(generateExpirationTimestamp()), //apns-expiration
+	}
+
+	//IOS 13 and upwards require these headers to be set. They are not set by Notification Hub at the moment, so we need to send them
+	if n.Format == AppleFormat {
+		if isAppleBackgroundNotification(n.Payload) {
+			headers["X-Apns-Push-Type"] = "background"
+			headers["X-Apns-Priority"] = "5"
+		} else {
+			headers["X-Apns-Push-Type"] = "alert"
+			headers["X-Apns-Priority"] = "10"
+		}
 	}
 
 	query := h.hubURL.Query()
@@ -461,4 +483,21 @@ func (h *NotificationHub) Register(r Registration) (RegistrationRes, []byte, err
 		}
 	}
 	return regRes, res, err
+}
+
+type iosBackgroundNotification struct {
+	Aps aps `json:"aps"`
+}
+type aps struct {
+	ContentAvailable int `json:"content-available"`
+}
+
+func isAppleBackgroundNotification(payload []byte) bool {
+	var backgroundNot iosBackgroundNotification
+	err := json.Unmarshal(payload, &backgroundNot)
+	if err != nil {
+		return false
+	}
+
+	return backgroundNot.Aps.ContentAvailable == 1
 }

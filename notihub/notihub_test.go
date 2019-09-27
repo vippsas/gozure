@@ -2,6 +2,7 @@ package notihub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -443,6 +444,115 @@ func Test_NotificationSendError(t *testing.T) {
 
 	if !strings.Contains(obtainedErr.Error(), expectedError.Error()) {
 		t.Errorf(errfmt, "Send error", expectedError, obtainedErr)
+	}
+}
+
+func Test_NotificationHubSendAppleBackgroundNotification(t *testing.T) {
+	n := &iosBackgroundNotification{Aps: aps{ContentAvailable: 1}}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Error(err)
+	}
+	var (
+		errfmt = "Expected %s: %v, got: %v"
+		notification = &Notification{AppleFormat, payload}
+
+		baseURL = &url.URL{
+			Host:     "testHost",
+			Scheme:   schemeDefault,
+			Path:     "testPath",
+			RawQuery: url.Values{"queryParam": {"queryValue"}}.Encode(),
+		}
+	)
+
+	mockClient := &mockHubHttpClient{}
+
+	nhub := &NotificationHub{
+		sasKeyName:              "testKeyName",
+		sasKeyValue:             "testKeyValue",
+		hubURL:                  baseURL,
+		client:                  mockClient,
+		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+	}
+
+	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
+
+	mockClient.execFunc = func(obtainedReq *http.Request) ([]byte, error) {
+		if obtainedReq.Header.Get("X-Apns-Push-Type") != "background" {
+			t.Errorf(errfmt, "X-Apns-Push-Type", "background", obtainedReq.Header.Get("X-Apns-Push-Type"))
+		}
+
+		if obtainedReq.Header.Get("X-Apns-Priority") != "5" {
+			t.Errorf(errfmt, "X-Apns-Priority", "5", obtainedReq.Header.Get("X-Apns-Priority"))
+		}
+
+		gotURL := obtainedReq.URL.String()
+		if gotURL != msgURL {
+			t.Errorf(errfmt, "URL", msgURL, gotURL)
+		}
+
+		return nil, nil
+	}
+
+	b, err := nhub.Send(context.Background(), notification, nil)
+	if b != nil {
+		t.Errorf(errfmt, "byte", nil, b)
+	}
+
+	if err != nil {
+		t.Errorf(errfmt, "error", nil, err)
+	}
+}
+
+func Test_NotificationHubSendAppleAlertNotification(t *testing.T) {
+	var (
+		errfmt = "Expected %s: %v, got: %v"
+		notification = &Notification{AppleFormat, []byte("{\"aps\":{\"alert\":1}}")}
+
+		baseURL = &url.URL{
+			Host:     "testHost",
+			Scheme:   schemeDefault,
+			Path:     "testPath",
+			RawQuery: url.Values{"queryParam": {"queryValue"}}.Encode(),
+		}
+	)
+
+	mockClient := &mockHubHttpClient{}
+
+	nhub := &NotificationHub{
+		sasKeyName:              "testKeyName",
+		sasKeyValue:             "testKeyValue",
+		hubURL:                  baseURL,
+		client:                  mockClient,
+		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+	}
+
+	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
+
+	mockClient.execFunc = func(obtainedReq *http.Request) ([]byte, error) {
+		if obtainedReq.Header.Get("X-Apns-Push-Type") != "alert" {
+			t.Errorf(errfmt, "X-Apns-Push-Type", "alert", obtainedReq.Header.Get("X-Apns-Push-Type"))
+		}
+
+		if obtainedReq.Header.Get("X-Apns-Priority") != "10" {
+			t.Errorf(errfmt, "X-Apns-Priority", "10", obtainedReq.Header.Get("X-Apns-Priority"))
+		}
+
+		gotURL := obtainedReq.URL.String()
+		if gotURL != msgURL {
+			t.Errorf(errfmt, "URL", msgURL, gotURL)
+		}
+
+		return nil, nil
+	}
+
+	b, err := nhub.Send(context.Background(), notification, nil)
+	if b != nil {
+		t.Errorf(errfmt, "byte", nil, b)
+	}
+
+	if err != nil {
+		t.Errorf(errfmt, "error", nil, err)
 	}
 }
 
