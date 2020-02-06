@@ -14,13 +14,15 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"gopkg.in/xmlpath.v2"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/xmlpath.v2"
 )
 
 const (
@@ -304,7 +306,7 @@ func (h *NotificationHub) sendDirect(ctx context.Context, n *Notification, devic
 		"Content-Type":                        n.Format.GetContentType(),
 		"ServiceBusNotification-Format":       string(n.Format),
 		"ServiceBusNotification-DeviceHandle": deviceHandle,
-		"X-Apns-Expiration":                   string(generateExpirationTimestamp()), //apns-expiration
+		"X-Apns-Expiration":                   strconv.FormatInt(generateExpirationTimestamp(), 10),//apns-expiration
 	}
 
 	//IOS 13 and upwards require these headers to be set. They are not set by Notification Hub at the moment, so we need to send them
