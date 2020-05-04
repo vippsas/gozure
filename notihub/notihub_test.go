@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -200,21 +199,21 @@ func Test_NewNotificationHub(t *testing.T) {
 		{
 			connectionString: "Endpoint=sb://testhub-ns.servicebus.windows.net/;SharedAccessKeyName=testAccessKeyName;SharedAccessKey=testAccessKey",
 			expectedHub: &NotificationHub{
-				sasKeyValue:             "testAccessKey",
-				sasKeyName:              "testAccessKeyName",
-				hubURL:                  &url.URL{Host: "testhub-ns.servicebus.windows.net", Scheme: schemeDefault, Path: hubPath, RawQuery: queryString},
-				client:                  &hubHttpClient{&http.Client{}},
-				expirationTimeGenerator: expirationTimeGeneratorFunc(generateExpirationTimestamp),
+				sasKeyValue:    "testAccessKey",
+				sasKeyName:     "testAccessKeyName",
+				hubURL:         &url.URL{Host: "testhub-ns.servicebus.windows.net", Scheme: schemeDefault, Path: hubPath, RawQuery: queryString},
+				client:         &hubHttpClient{&http.Client{}},
+				expiryTimeFunc: buildExpiryTimeFunc(time.Hour),
 			},
 		},
 		{
 			connectionString: "wrong_connection_string",
 			expectedHub: &NotificationHub{
-				sasKeyValue:             "",
-				sasKeyName:              "",
-				hubURL:                  &url.URL{Host: "", Scheme: schemeDefault, Path: hubPath, RawQuery: queryString},
-				client:                  &hubHttpClient{&http.Client{}},
-				expirationTimeGenerator: expirationTimeGeneratorFunc(generateExpirationTimestamp),
+				sasKeyValue:    "",
+				sasKeyName:     "",
+				hubURL:         &url.URL{Host: "", Scheme: schemeDefault, Path: hubPath, RawQuery: queryString},
+				client:         &hubHttpClient{&http.Client{}},
+				expiryTimeFunc: buildExpiryTimeFunc(time.Hour),
 			},
 		},
 	}
@@ -236,10 +235,10 @@ func Test_NewNotificationHub(t *testing.T) {
 			t.Errorf(errfmt, i, "NotificationHub.hubURL", wantURL, gotURL)
 		}
 
-		expectedGeneratorType := reflect.ValueOf(testCase.expectedHub.expirationTimeGenerator).Type()
-		obtainedGeneratorType := reflect.ValueOf(obtainedNotificationHub.expirationTimeGenerator).Type()
+		expectedGeneratorType := reflect.ValueOf(testCase.expectedHub.expiryTimeFunc).Type()
+		obtainedGeneratorType := reflect.ValueOf(obtainedNotificationHub.expiryTimeFunc).Type()
 		if !obtainedGeneratorType.AssignableTo(expectedGeneratorType) {
-			t.Errorf(errfmt, i, "NotificationHub.expirationTimeGenerator", expectedGeneratorType, obtainedGeneratorType)
+			t.Errorf(errfmt, i, "NotificationHub.expiryTimeFunc", expectedGeneratorType, obtainedGeneratorType)
 		}
 	}
 }
@@ -250,6 +249,11 @@ type mockHubHttpClient struct {
 
 func (mc *mockHubHttpClient) Exec(req *http.Request) ([]byte, error) {
 	return mc.execFunc(req)
+}
+
+var mockExpiryTime  = func() time.Time {
+	// unix time 123
+	return time.Date(1970, 1, 1, 0, 2, 3, 0, time.UTC)
 }
 
 func Test_NotificationHubSendFanout(t *testing.T) {
@@ -269,11 +273,11 @@ func Test_NotificationHubSendFanout(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyValue:             "testKeyValue",
-		sasKeyName:              "testKeyName",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyValue:    "testKeyValue",
+		sasKeyName:     "testKeyName",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
@@ -329,12 +333,12 @@ func Test_NotificationHubSendFanout(t *testing.T) {
 
 		obtainedExpStr := queryMap["se"]
 		if len(obtainedExpStr) == 0 {
-			t.Errorf(errfmt, "token expiration", nhub.expirationTimeGenerator.GenerateTimestamp(), obtainedExpStr)
+			t.Errorf(errfmt, "token expiration", nhub.expiryTimeFunc.UnixTimestamp(), obtainedExpStr)
 		}
 
-		obtainedExp, err := strconv.Atoi(obtainedExpStr[0])
-		if err != nil || int64(obtainedExp) != nhub.expirationTimeGenerator.GenerateTimestamp() {
-			t.Errorf(errfmt, "token expiration", nhub.expirationTimeGenerator.GenerateTimestamp(), obtainedExp)
+		obtainedExp := obtainedExpStr[0]
+		if string(obtainedExp) != nhub.expiryTimeFunc.UnixTimestamp() {
+			t.Errorf(errfmt, "token expiration", nhub.expiryTimeFunc.UnixTimestamp(), obtainedExp)
 		}
 
 		if len(queryMap["skn"]) == 0 || queryMap["skn"][0] != nhub.sasKeyName {
@@ -372,11 +376,11 @@ func Test_NotificationHubSendCategories(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyName:              "testKeyName",
-		sasKeyValue:             "testKeyValue",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyName:     "testKeyName",
+		sasKeyValue:    "testKeyValue",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
@@ -430,11 +434,11 @@ func Test_NotificationSendError(t *testing.T) {
 	}
 
 	nhub := &NotificationHub{
-		sasKeyValue:             "testKeyValue",
-		sasKeyName:              "testKeyName",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyValue:    "testKeyValue",
+		sasKeyName:     "testKeyName",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	b, obtainedErr := nhub.Send(context.Background(), &Notification{AndroidFormat, []byte("test payload")}, nil)
@@ -468,11 +472,11 @@ func Test_NotificationHubSendAppleBackgroundNotification(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyName:              "testKeyName",
-		sasKeyValue:             "testKeyValue",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyName:     "testKeyName",
+		sasKeyValue:    "testKeyValue",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
@@ -520,11 +524,11 @@ func Test_NotificationHubSendAppleAlertNotification(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyName:              "testKeyName",
-		sasKeyValue:             "testKeyValue",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyName:     "testKeyName",
+		sasKeyValue:    "testKeyValue",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	msgURL := "https://testHost/testPath/messages?queryParam=queryValue"
@@ -571,11 +575,11 @@ func Test_NotificationScheduleSuccess(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyValue:             "testKeyValue",
-		sasKeyName:              "testKeyName",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyValue:    "testKeyValue",
+		sasKeyName:     "testKeyName",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	schURL := "https://testHost/testPath/schedulednotifications?queryParam=queryValue"
@@ -615,11 +619,11 @@ func Test_NotificationScheduleOutdated(t *testing.T) {
 	mockClient := &mockHubHttpClient{}
 
 	nhub := &NotificationHub{
-		sasKeyValue:             "testKeyValue",
-		sasKeyName:              "testKeyName",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyValue:    "testKeyValue",
+		sasKeyName:     "testKeyName",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	schURL := "https://testHost/testPath/messages?queryParam=queryValue"
@@ -668,11 +672,11 @@ func Test_NotificationScheduleError(t *testing.T) {
 	}
 
 	nhub := &NotificationHub{
-		sasKeyValue:             "testKeyValue",
-		sasKeyName:              "testKeyName",
-		hubURL:                  baseURL,
-		client:                  mockClient,
-		expirationTimeGenerator: expirationTimeGeneratorFunc(func() int64 { return 123 }),
+		sasKeyValue:    "testKeyValue",
+		sasKeyName:     "testKeyName",
+		hubURL:         baseURL,
+		client:         mockClient,
+		expiryTimeFunc: TimeFunc(mockExpiryTime),
 	}
 
 	b, obtainedErr := nhub.Schedule(context.Background(), &Notification{AndroidFormat, []byte("test payload")}, nil, time.Now().Add(time.Minute))

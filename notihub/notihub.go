@@ -93,11 +93,11 @@ type (
 	}
 
 	NotificationHub struct {
-		sasKeyValue             string
-		sasKeyName              string
-		hubURL                  *url.URL
-		client                  HubClient
-		expirationTimeGenerator expirationTimeGenerator
+		sasKeyValue    string
+		sasKeyName     string
+		hubURL         *url.URL
+		client         HubClient
+		expiryTimeFunc TimeFunc // use buildExpiryTimeFunc
 
 		regIdPath *xmlpath.Path
 		eTagPath  *xmlpath.Path
@@ -108,20 +108,17 @@ type (
 		Exec(req *http.Request) ([]byte, error)
 	}
 
-	expirationTimeGenerator interface {
-		GenerateTimestamp() int64
-	}
-
-	expirationTimeGeneratorFunc func() int64
+	TimeFunc func() time.Time
 
 	hubHttpClient struct {
 		httpClient *http.Client
 	}
 )
 
-// GenerateTimestamp calls f()
-func (f expirationTimeGeneratorFunc) GenerateTimestamp() int64 {
-	return f()
+// UnixTimestamp calls f()
+func (f TimeFunc) UnixTimestamp() string {
+	unixTime := f().Unix()
+	return strconv.FormatInt(unixTime, 10)
 }
 
 // Exec executes notification hub http request and handles the response
@@ -205,7 +202,7 @@ func NewNotificationHub(connectionString, hubPath string, client *http.Client) *
 	hub.hubURL.RawQuery = url.Values{apiVersionParam: {apiVersionValue}}.Encode()
 
 	hub.client = &hubHttpClient{httpClient: client}
-	hub.expirationTimeGenerator = expirationTimeGeneratorFunc(generateExpirationTimestamp)
+	hub.expiryTimeFunc = buildExpiryTimeFunc(time.Hour)
 
 	hub.regIdPath = xmlpath.MustCompile("/entry/content/*/RegistrationId")
 	hub.eTagPath = xmlpath.MustCompile("/entry/content/*/ETag")
@@ -252,7 +249,7 @@ func (h *NotificationHub) send(ctx context.Context, n *Notification, orTags []st
 		"Authorization":                 token,
 		"Content-Type":                  n.Format.GetContentType(),
 		"ServiceBusNotification-Format": string(n.Format),
-		"X-Apns-Expiration":             string(generateExpirationTimestamp()), //apns-expiration
+		"X-Apns-Expiration":             h.expiryTimeFunc.UnixTimestamp(),
 	}
 
 	if len(orTags) > 0 {
@@ -306,7 +303,7 @@ func (h *NotificationHub) sendDirect(ctx context.Context, n *Notification, devic
 		"Content-Type":                        n.Format.GetContentType(),
 		"ServiceBusNotification-Format":       string(n.Format),
 		"ServiceBusNotification-DeviceHandle": deviceHandle,
-		"X-Apns-Expiration":                   strconv.FormatInt(generateExpirationTimestamp(), 10),//apns-expiration
+		"X-Apns-Expiration":                   h.expiryTimeFunc.UnixTimestamp(),
 	}
 
 	//IOS 13 and upwards require these headers to be set. They are not set by Notification Hub at the moment, so we need to send them
@@ -352,8 +349,8 @@ func (h *NotificationHub) generateSasToken() string {
 	}
 	targetUri := strings.ToLower(uri.String())
 
-	expires := h.expirationTimeGenerator.GenerateTimestamp()
-	toSign := fmt.Sprintf("%s\n%d", url.QueryEscape(targetUri), expires)
+	expires := h.expiryTimeFunc.UnixTimestamp()
+	toSign := fmt.Sprintf("%s\n%s", url.QueryEscape(targetUri), expires)
 
 	mac := hmac.New(sha256.New, []byte(h.sasKeyValue))
 	mac.Write([]byte(toSign))
@@ -364,16 +361,20 @@ func (h *NotificationHub) generateSasToken() string {
 	tokenParams := url.Values{
 		"sr":  {targetUri},
 		"sig": {signature},
-		"se":  {fmt.Sprintf("%d", expires)},
+		"se":  {expires},
 		"skn": {h.sasKeyName},
 	}
 
 	return fmt.Sprintf("SharedAccessSignature %s", tokenParams.Encode())
 }
 
-// generateExpirationTimestamp generates token expiration timestamp value
-func generateExpirationTimestamp() int64 {
-	return time.Now().Unix() + int64(3600)
+func buildExpiryTimeFunc(delta time.Duration) TimeFunc {
+	if delta <= 0 {
+		panic("Attempted to build expiry TimeFunc with non-positive delta!")
+	}
+	return func() time.Time {
+		return time.Now().Add(delta)
+	}
 }
 
 // handleResponse reads http response body into byte slice
