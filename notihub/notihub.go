@@ -40,12 +40,17 @@ const (
 
 const (
 	Template           NotificationFormat = "template"
-	AndroidFormat      NotificationFormat = "gcm"
+	AndroidFcmV1Format NotificationFormat = "FcmV1"
 	AppleFormat        NotificationFormat = "apple"
 	BaiduFormat        NotificationFormat = "baidu"
 	KindleFormat       NotificationFormat = "adm"
 	WindowsFormat      NotificationFormat = "windows"
 	WindowsPhoneFormat NotificationFormat = "windowsphone"
+
+	// Deprecated
+	// Use AndroidFcmV1Format instead
+	// https://learn.microsoft.com/en-us/azure/notification-hubs/notification-hubs-gcm-to-fcm
+	AndroidFormat NotificationFormat = "gcm"
 
 	AppleRegTemplate string = `<?xml version="1.0" encoding="utf-8"?>
 <entry xmlns="http://www.w3.org/2005/Atom">
@@ -149,7 +154,8 @@ func (f NotificationFormat) IsValid() bool {
 		f == BaiduFormat ||
 		f == KindleFormat ||
 		f == WindowsFormat ||
-		f == WindowsPhoneFormat
+		f == WindowsPhoneFormat ||
+		f == AndroidFcmV1Format
 }
 
 // NewNotification initializes and returns Notification pointer
@@ -344,7 +350,7 @@ func (h *NotificationHub) sendDirect(ctx context.Context, n *Notification, devic
 // azure notification hub shared access signatue token
 func (h *NotificationHub) generateSasToken() string {
 	uri := &url.URL{
-		Host: h.hubURL.Host,
+		Host:   h.hubURL.Host,
 		Scheme: h.hubURL.Scheme,
 	}
 	targetUri := strings.ToLower(uri.String())
